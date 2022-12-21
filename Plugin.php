@@ -15,18 +15,16 @@ use PhpParser\Node\Scalar\String_;
 use PhpParser\Node\Stmt\Echo_;
 use PhpParser\Node\Stmt\Return_;
 use Psalm;
-use Psalm\Codebase;
-use Psalm\CodeLocation;
-use Psalm\Context;
 use Psalm\Exception\TypeParseTreeException;
 use Psalm\IssueBuffer;
-use Psalm\Plugin\Hook\AfterEveryFunctionCallAnalysisInterface;
-use Psalm\Plugin\Hook\BeforeFileAnalysisInterface;
-use Psalm\Plugin\Hook\FunctionParamsProviderInterface;
+use Psalm\Plugin\EventHandler\AfterEveryFunctionCallAnalysisInterface;
+use Psalm\Plugin\EventHandler\BeforeFileAnalysisInterface;
+use Psalm\Plugin\EventHandler\Event\AfterEveryFunctionCallAnalysisEvent;
+use Psalm\Plugin\EventHandler\Event\BeforeFileAnalysisEvent;
+use Psalm\Plugin\EventHandler\Event\FunctionParamsProviderEvent;
+use Psalm\Plugin\EventHandler\FunctionParamsProviderInterface;
 use Psalm\Plugin\PluginEntryPointInterface;
 use Psalm\Plugin\RegistrationInterface;
-use Psalm\StatementsSource;
-use Psalm\Storage\FileStorage;
 use Psalm\Storage\FunctionLikeParameter;
 use Psalm\Type;
 use Psalm\Type\Atomic;
@@ -293,12 +291,12 @@ class Plugin implements
 		}
 	}
 
-	public static function beforeAnalyzeFile(
-		StatementsSource $statements_source,
-		Context $file_context,
-		FileStorage $file_storage,
-		Codebase $codebase
-	) : void {
+	public static function beforeAnalyzeFile( BeforeFileAnalysisEvent $event ) : void {
+		$statements_source = $event->getStatementsSource();
+		$file_context = $event->getFileContext();
+		$file_storage = $event->getFileStorage();
+		$codebase = $event->getCodebase();
+
 		$statements = $codebase->getStatementsForFile( $statements_source->getFilePath() );
 		$traverser = new PhpParser\NodeTraverser;
 		$hook_visitor = new HookNodeVisitor();
@@ -314,13 +312,13 @@ class Plugin implements
 		}
 	}
 
-	public static function afterEveryFunctionCallAnalysis(
-		FuncCall $expr,
-		string $function_id,
-		Context $context,
-		StatementsSource $statements_source,
-		Codebase $codebase
-	) : void {
+	public static function afterEveryFunctionCallAnalysis( AfterEveryFunctionCallAnalysisEvent $event ) : void {
+		$expr = $event->getExpr();
+		$function_id = $event->getFunctionId();
+		$context = $event->getContext();
+		$statements_source = $event->getStatementsSource();
+		$codebase = $event->getCodebase();
+
 		$apply_filter_functions = [
 			'apply_filters',
 			'apply_filters_ref_array',
@@ -399,15 +397,22 @@ class Plugin implements
 	/**
 	 * @param  list<PhpParser\Node\Arg> $call_args
 	 * @return ?array<int, \Psalm\Storage\FunctionLikeParameter>
-	 */
-	public static function getFunctionParams(
+	 * public static function getFunctionParams(
 		StatementsSource $statements_source,
 		string $function_id,
 		array $call_args,
 		Context $context = null,
 		CodeLocation $code_location = null
-	) : ?array {
+	 * )
+	 */
+	public static function getFunctionParams( FunctionParamsProviderEvent $event ) : ?array {
 		static::loadStubbedHooks();
+
+		$statements_source = $event->getStatementsSource();
+		$function_id = $event->getFunctionId();
+		$call_args = $event->getCallArgs();
+		$context = $event->getContext();
+		$code_location = $event->getCodeLocation();
 
 		// Currently we only support detecting the hook name if it's a string.
 		if ( ! $call_args[0]->value instanceof String_ ) {
@@ -467,7 +472,7 @@ class Plugin implements
 		$hook_types = array_slice( $hook['types'], 0, $num_args );
 
 		$hook_params = array_map( function ( Union $type ) : FunctionLikeParameter {
-			return new FunctionLikeParameter( 'param', false, $type, null, null, false );
+			return new FunctionLikeParameter( 'param', false, $type, null, null, null );
 		}, $hook_types );
 
 		// Actions must return null/void. Filters must return the same type as the first param.
@@ -482,14 +487,14 @@ class Plugin implements
 		}
 
 		$return = [
-			new FunctionLikeParameter( 'Hook', false, Type::parseString( 'string' ), null, null, false ),
+			new FunctionLikeParameter( 'Hook', false, Type::parseString( 'string' ), null, null, null ),
 			new FunctionLikeParameter( 'Callback', false, new Union( [
 				new Atomic\TCallable(
 					'callable',
 					$hook_params,
 					$return_type
 				),
-			] ), null, null, false ),
+			] ), null, null, null ),
 			new FunctionLikeParameter( 'Priority', false, Type::parseString( 'int|null' ) ),
 			new FunctionLikeParameter( 'Args', false, Type::parseString( 'int|null' ) ),
 		];
